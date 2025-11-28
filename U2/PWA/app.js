@@ -164,3 +164,41 @@ btnShot.addEventListener('click', () => {
         photos.prepend(wrap);
     }, 'image/png');
 });
+
+// ======================
+// Grabación de Audio
+// ======================
+function supportsRecorder() {
+    return 'MediaRecorder' in window;
+}
+
+// Iniciar grabación
+btnStartRec.addEventListener('click', async () => {
+    if (!supportsRecorder()) {
+        alert('MediaRecorder no está disponible en este navegador.');
+        return;
+    }
+
+    try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+        chunks = [];
+
+        mediaRecorder.ondataavailable = e => {
+            if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        mediaRecorder.onstart = () => {
+            recStatus.textContent = 'Grabando...';
+        };
+
+        mediaRecorder.start();
+
+        btnStartRec.disabled = true;
+        btnStopRec.disabled = false;
+
+    } catch (err) {
+        alert('No se pudo iniciar el micrófono: ' + err.message);
+    }
+});
