@@ -33,37 +33,33 @@ btnInstall.addEventListener('click', async () => {
     if (!beforeInstallEvent) return;
     beforeInstallEvent.prompt();
     await beforeInstallEvent.userChoice;
-    btnInstall.hidden = true;
     beforeInstallEvent = null;
+    btnInstall.hidden = true;
 });
 
-// Listado de cámaras
-async function listVideoInputs() {
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter(d => d.kind === 'videoinput');
+// Listar cámaras disponibles
+async function listVideoDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
 
-        videoDevices.innerHTML = '';
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    videoDevices.innerHTML = '';
 
-        cams.forEach((d, i) => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Camara ${i + 1}`;
-            videoDevices.appendChild(opt);
-        });
-    } catch (err) {
-        console.warn('No se pudo enumerar dispositivos:', err);
-    }
+    const cams = devices.filter(d => d.kind === 'videoinput');
+    cams.forEach((cam) => {
+        const opt = document.createElement('option');
+        opt.value = cam.deviceId;
+        opt.textContent = cam.label || `Cámara ${videoDevices.length + 1}`;
+        videoDevices.appendChild(opt);
+    });
 }
 
 // Iniciar cámara
 async function startCam(constraints = {}) {
-    if (!('mediaDevices' in navigator)) {
-        alert('Este navegador no soporta acceso a Cámara/Micrófono');
-        return;
-    }
-
     try {
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+        }
+
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacing, ...constraints },
             audio: false
@@ -71,58 +67,51 @@ async function startCam(constraints = {}) {
 
         video.srcObject = stream;
 
+        btnStartCam.disabled = true;
         btnStopCam.disabled = false;
         btnFlip.disabled = false;
-        btnShot.disabled = false;
         btnTorch.disabled = false;
+        btnShot.disabled = false;
 
-        await listVideoInputs();
+        await listVideoDevices();
     } catch (err) {
         alert('No se pudo iniciar la cámara: ' + err.message);
-        console.error(err);
     }
 }
 
 // Detener cámara
 function stopCam() {
-    if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-    }
+    if (!stream) return;
 
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
     video.srcObject = null;
 
+    btnStartCam.disabled = false;
     btnStopCam.disabled = true;
     btnFlip.disabled = true;
-    btnShot.disabled = true;
     btnTorch.disabled = true;
+    btnShot.disabled = true;
 }
 
-// Botones de control de camara
+// Botones de cámara
 btnStartCam.addEventListener('click', () => startCam());
-
 btnStopCam.addEventListener('click', stopCam);
 
+// Cambiar cámara frontal/trasera
 btnFlip.addEventListener('click', async () => {
-    currentFacing = (currentFacing === 'environment') ? 'user' : 'environment';
-    stopCam();
+    currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
     await startCam();
 });
 
-// Cambiar cámara desde el select
-videoDevices.addEventListener('change', async (e) => {
-    const id = e.target.value;
-    stopCam();
-    await startCam({ deviceId: { exact: id } });
-});
-
-// Activar linterna
+// Encender/apagar linterna (torch)
 btnTorch.addEventListener('click', async () => {
-    try {
-        const [track] = stream ? stream.getVideoTracks() : [];
-        if (!track) return;
+    if (!stream) return;
 
-        const cts = track.getConstraints();
+    const track = stream.getVideoTracks()[0];
+    const cts = track.getConstraints();
+
+    try {
         const torch = !(cts.advanced && cts.advanced[0]?.torch);
 
         await track.applyConstraints({ advanced: [{ torch }] });
@@ -144,6 +133,8 @@ btnShot.addEventListener('click', () => {
     ctx.drawImage(video, 0, 0, w, h);
 
     canvas.toBlob((blob) => {
+        if (!blob) return;
+
         const url = URL.createObjectURL(blob);
 
         const a = document.createElement('a');
@@ -172,6 +163,8 @@ function supportsRecorder() {
     return 'MediaRecorder' in window;
 }
 
+let audioStream = null; // stream global de audio
+
 // Iniciar grabación
 btnStartRec.addEventListener('click', async () => {
     if (!supportsRecorder()) {
@@ -180,17 +173,50 @@ btnStartRec.addEventListener('click', async () => {
     }
 
     try {
-        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
         mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
         chunks = [];
 
-        mediaRecorder.ondataavailable = e => {
+        mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) chunks.push(e.data);
         };
 
         mediaRecorder.onstart = () => {
             recStatus.textContent = 'Grabando...';
+        };
+
+        mediaRecorder.onstop = () => {
+            recStatus.textContent = 'Grabación detenida';
+
+            const blob = new Blob(chunks, { type: 'audio/webm' });
+            const url = URL.createObjectURL(blob);
+
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = url;
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `audio-${Date.now()}.webm`;
+            link.textContent = 'Descargar audio';
+            link.className = 'btn';
+
+            const wrap = document.createElement('div');
+            wrap.appendChild(audio);
+            wrap.appendChild(link);
+
+            if (audios) {
+                audios.prepend(wrap);
+            }
+
+            if (audioStream) {
+                audioStream.getTracks().forEach(t => t.stop());
+                audioStream = null;
+            }
+
+            btnStartRec.disabled = false;
+            btnStopRec.disabled = true;
         };
 
         mediaRecorder.start();
@@ -202,3 +228,79 @@ btnStartRec.addEventListener('click', async () => {
         alert('No se pudo iniciar el micrófono: ' + err.message);
     }
 });
+
+// Evento click para detener la grabación
+btnStopRec.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+    }
+});
+
+//Cuando la pestaña o app pierde focus (foco de atencion) apagamos la camara para ahorrar recursos.
+window.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        stopCam();
+    }
+});
+
+// Service worker registrado
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+}
+
+//Vibracion con toggle
+let vibrando = false;  // Estado de la vibracion simulada
+let vibrarInterval = null; //Intervalo que repite el patron de vibracion
+const btnVibrar = document.getElementById("btnVibrar");
+
+if (btnVibrar) {
+    btnVibrar.addEventListener("click", () => {
+        // Verifica el soporte de la API de vibracion
+        if (!("vibrate" in navigator)) {
+            alert("Tu dispositivo o navegador no soporta la vibracion.");
+            return;
+        }
+
+        if (!vibrando) {
+            //Inicia vibracion repetida (300ms vibra y 100ms pausa)
+            vibrando = true;
+            btnVibrar.textContent = "Detener vibracion.";
+            vibrarInterval = setInterval(() => {
+                navigator.vibrate([300, 100]); //Patron corto
+            }, 400);
+        } else {
+            //Detiene vibracion y limpia intervalo
+            vibrando = false;
+            btnVibrar.textContent = "Vibrar";
+            clearInterval(vibrarInterval);
+            navigator.vibrate(0); // Apagar la vibracion inmediatamente
+        }
+    });
+}
+
+//Tono de llamada simulado
+let sonando = false; //Estado de la reproduccion
+let ringtoneAudio = new Audio("assets/old_phone_ring.mp3"); //Ruta del audio
+ringtoneAudio.loop = true; //Reproducir un bucle para simular el audio
+
+const btnRingtone = document.getElementById("btnRingtone");
+
+if (btnRingtone) {
+    btnRingtone.addEventListener("click", () => {
+        if (!sonando) {
+            //Inicia reproduccion del tono y actualiza el texto del boton
+            ringtoneAudio.play()
+                .then(() => {
+                    sonando = true;
+                    btnRingtone.textContent = "Detener tono.";
+                })
+                .catch(err => alert("No se pudo reproducir el tono. " + err.message));
+        } else {
+            //Pausa y reinicia el audio, restableciendo el boton
+            ringtoneAudio.pause();
+            ringtoneAudio.currentTime = 0; //Vuelve a reiniciar el audio desde el inicio
+            sonando = false;
+            btnRingtone.textContent = "Reproducir tono.";
+        }
+    });
+}
